@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { LoginForm } from "@/components/auth/login-form";
@@ -35,7 +36,15 @@ export default async function LoginPage() {
           </div>
         </section>
 
-        <LoginForm />
+        <div className="w-full max-w-xl">
+          <LoginForm />
+          <p className="mt-6 text-center text-sm text-muted-foreground/80 lg:text-left">
+            Administrator?{" "}
+            <Link href="/admin/login" className="font-semibold text-[#8B0000] underline-offset-4 hover:underline">
+              Buka gerbang admin khusus
+            </Link>
+          </p>
+        </div>
       </div>
     </div>
   );

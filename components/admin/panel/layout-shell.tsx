@@ -1,7 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { LayoutDashboard, LibraryBig, Users2 } from "lucide-react";
+import { LayoutDashboard, LibraryBig, UserCog, Users2 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
@@ -12,6 +12,7 @@ const links = [
   { href: "/admin", label: "Overview", icon: LayoutDashboard },
   { href: "/admin/presensi", label: "Manajemen Presensi", icon: LibraryBig },
   { href: "/admin/users", label: "Manajemen Users", icon: Users2 },
+  { href: "/profile", label: "Profile", icon: UserCog },
 ];
 
 export function AdminLayoutShell({ children }: { children: ReactNode }) {

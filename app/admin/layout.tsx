@@ -10,7 +10,7 @@ export default async function AdminLayout({ children }: { children: ReactNode })
   const session = await getSessionFromCookies();
 
   if (!session) {
-    redirect("/login");
+    redirect("/admin/login");
   }
 
   if (!session.is_admin) {

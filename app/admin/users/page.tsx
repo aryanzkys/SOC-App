@@ -15,7 +15,7 @@ export default async function AdminUsersPage() {
   const session = await getSessionFromCookies();
 
   if (!session) {
-    redirect("/login");
+    redirect("/admin/login");
   }
 
   if (!session.is_admin) {
