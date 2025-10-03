@@ -8,7 +8,7 @@ if (!JWT_SECRET) {
   throw new Error("Missing JWT_SECRET environment variable");
 }
 
-const AUTH_PAGES = ["/login"];
+const AUTH_PAGES = ["/login", "/admin/login"];
 const PROTECTED_PAGES = ["/dashboard", "/profile", "/admin"];
 const PROTECTED_APIS = [
   "/api/auth/change-token",
@@ -34,11 +34,21 @@ export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const session = await readSession(request);
 
-  const isAuthPage = AUTH_PAGES.some((path) => pathname.startsWith(path));
+  // Auth page handling
+  const isAuthPage = AUTH_PAGES.some((path) => pathname === path);
+
   if (isAuthPage && session) {
-    return NextResponse.redirect(new URL("/dashboard", request.url));
+    if (pathname === "/login") {
+      // Jika user sudah login biasa → redirect ke dashboard
+      return NextResponse.redirect(new URL("/dashboard", request.url));
+    }
+    if (pathname === "/admin/login" && session.is_admin) {
+      // Jika admin sudah login → redirect ke admin dashboard
+      return NextResponse.redirect(new URL("/admin", request.url));
+    }
   }
 
+  // Protected pages
   const isProtectedPage = PROTECTED_PAGES.some((path) => pathname.startsWith(path));
   if (isProtectedPage && !session) {
     const url = new URL("/login", request.url);
@@ -46,20 +56,22 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
+  // Protected APIs
   const isProtectedApi = PROTECTED_APIS.some((path) => pathname.startsWith(path));
   if (isProtectedApi && !session) {
     return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
   }
 
+  // Admin page restriction
   if (pathname.startsWith("/admin") && session && !session.is_admin) {
     return NextResponse.redirect(new URL("/dashboard", request.url));
   }
 
+  // Admin API restriction
   if (
-    PROTECTED_APIS.some((path) => pathname.startsWith(path)) &&
+    pathname.startsWith("/api/admin") &&
     session &&
-    !session.is_admin &&
-    pathname.startsWith("/api/admin")
+    !session.is_admin
   ) {
     return NextResponse.json({ message: "Forbidden" }, { status: 403 });
   }
