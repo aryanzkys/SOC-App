@@ -12,8 +12,10 @@ const AUTH_PAGES = ["/login"];
 const PROTECTED_PAGES = ["/dashboard", "/profile", "/admin"];
 const PROTECTED_APIS = [
   "/api/auth/change-token",
+  "/api/attendance",
   "/api/admin/create-user",
   "/api/admin/reset-token",
+  "/api/admin/attendance",
 ];
 
 async function readSession(request: NextRequest) {
