@@ -29,11 +29,12 @@ export default async function LoginPage() {
           <p className="text-lg text-muted-foreground">
             Dual-factor credentials ensure that every action is traceable and sovereign. Use your NISN and security token to step back into mission control.
           </p>
-          <div className="grid gap-3 text-sm text-muted-foreground/80">
-            <p>• Tokens refresh instantly with bcrypt hashing on every change.</p>
-            <p>• Sessions remain active for 8 hours with tamper-proof JWT signatures.</p>
-            <p>• Royal Red interface delivers a confident, tactile login experience.</p>
-          </div>
+        <div className="grid gap-3 text-sm text-muted-foreground/80">
+            <p>• Tokens are securely updated right away using bcrypt hashing.</p>
+            <p>• Sessions stay active for 8 hours, protected with tamper-proof JWT signatures.</p>
+            <p>• Your data is always encrypted and kept private.</p>
+        </div>
+
         </section>
 
         <div className="w-full max-w-xl">
