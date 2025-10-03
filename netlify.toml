@@ -9,9 +9,13 @@ package = "@netlify/plugin-nextjs"
 [[plugins]]
 package = "@netlify/plugin-lighthouse"
 	[plugins.inputs]
-	numberOfRuns = 1
-	fail_deploy_on_score = "performance"
+	audit_url = "https://smanesiolympiadclub.netlify.app"
 	output_path = "./.lighthouse"
+	[plugins.inputs.thresholds]
+	  performance = 0.9
+	  accessibility = 0.9
+	  best_practices = 0.9
+	  seo = 0.9
 
 [[headers]]
 for = "/*"
