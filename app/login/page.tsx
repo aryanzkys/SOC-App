@@ -21,7 +21,7 @@ export default async function LoginPage() {
       <div className="mx-auto flex max-w-7xl flex-col items-center gap-16 lg:flex-row lg:items-start lg:justify-between">
         <section className="max-w-xl space-y-6 text-center lg:text-left">
           <p className="inline-flex items-center gap-2 rounded-full border border-white/25 bg-white/20 px-4 py-2 text-xs uppercase tracking-[0.4em] text-[#8B0000] shadow-[0_15px_40px_rgba(139,0,0,0.3)]">
-            SOC Command Access
+            SMANESI Olympiad Club Access
           </p>
           <h1 className="text-balance text-4xl font-semibold text-foreground sm:text-5xl lg:text-6xl">
             Authenticate securely. Command with absolute clarity.
