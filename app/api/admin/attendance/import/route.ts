@@ -1,11 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
+import dayjs from "dayjs";
+import utc from "dayjs/plugin/utc";
+import timezone from "dayjs/plugin/timezone";
 
 import { requireSession } from "@/lib/auth";
 import { recordAuditLog, resolveAuditActor } from "@/lib/audit";
 import { type AttendanceStatus } from "@/lib/attendance";
 import { supabaseServerClient } from "@/lib/supabase";
 
+dayjs.extend(utc);
+dayjs.extend(timezone);
+
 const VALID_STATUS: AttendanceStatus[] = ["Hadir", "Izin", "Alfa"];
+const DATE_FORMAT = "YYYY-MM-DD";
+const TIMEZONE = "Asia/Jakarta";
+const NISN_PATTERN = /^[0-9]{5,20}$/;
 
 type ImportRow = {
   nisn: string;
@@ -39,13 +48,26 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "No data to import" }, { status: 400 });
   }
 
-  const sanitized = payload.records
-    .map((record) => ({
-      nisn: typeof record.nisn === "string" ? record.nisn.trim() : "",
-      date: typeof record.date === "string" ? record.date.trim() : "",
-      status: record.status,
-    }))
-    .filter((record) => record.nisn.length > 0 && record.date.length > 0 && VALID_STATUS.includes(record.status));
+  const rowsByKey = new Map<string, ImportRow>();
+  let rejected = 0;
+
+  for (const record of payload.records) {
+    const nisn = typeof record.nisn === "string" ? record.nisn.trim() : "";
+    const dateValue = typeof record.date === "string" ? record.date.trim() : "";
+    const status = record.status;
+
+    const isValidDate = dayjs(dateValue, DATE_FORMAT, true).isValid() && dayjs.tz(dateValue, TIMEZONE).isValid();
+
+    if (!NISN_PATTERN.test(nisn) || !isValidDate || !VALID_STATUS.includes(status)) {
+      rejected += 1;
+      continue;
+    }
+
+    const normalizedDate = dayjs(dateValue, DATE_FORMAT).format(DATE_FORMAT);
+    rowsByKey.set(`${nisn}:${normalizedDate}`, { nisn, date: normalizedDate, status });
+  }
+
+  const sanitized = Array.from(rowsByKey.values());
 
   if (sanitized.length === 0) {
     return NextResponse.json({ message: "No valid records" }, { status: 400 });
@@ -100,6 +122,7 @@ export async function POST(request: NextRequest) {
       received: payload.records.length,
       imported: upsertRows.length,
       unmatched: sanitized.length - upsertRows.length,
+      rejected,
     },
   });
 
@@ -107,5 +130,6 @@ export async function POST(request: NextRequest) {
     message: "Attendance import completed",
     imported: upsertRows.length,
     unmatched: sanitized.length - upsertRows.length,
+    rejected,
   });
 }

@@ -2,7 +2,7 @@ import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 import { serialize } from "cookie";
 
-import { signSession, verifySession, sessionExpirySeconds, type SessionPayload } from "@/lib/jwt";
+import { signSession, verifySession, type SessionPayload } from "@/lib/jwt";
 
 const SESSION_COOKIE_NAME = "session";
 
@@ -16,10 +16,11 @@ export function createSessionResponse({
   const token = signSession(payload);
   const cookie = serialize(SESSION_COOKIE_NAME, token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: process.env.NODE_ENV !== "development",
     path: "/",
-    sameSite: "lax",
-    maxAge: sessionExpirySeconds,
+    sameSite: "strict",
+    priority: "high",
+    maxAge: 60 * 60 * 8,
   });
 
   response.headers.append("Set-Cookie", cookie);
@@ -29,9 +30,9 @@ export function createSessionResponse({
 export function clearSession(response: NextResponse) {
   const cookie = serialize(SESSION_COOKIE_NAME, "", {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: process.env.NODE_ENV !== "development",
     path: "/",
-    sameSite: "lax",
+    sameSite: "strict",
     maxAge: 0,
   });
   response.headers.append("Set-Cookie", cookie);

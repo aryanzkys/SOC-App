@@ -6,6 +6,8 @@ import { supabaseServerClient } from "@/lib/supabase";
 import { hashToken } from "@/lib/token";
 
 const MIN_TOKEN_LENGTH = 8;
+const NISN_PATTERN = /^[0-9]{5,20}$/;
+const NAME_SAFE_PATTERN = /[^A-Za-zÀ-ÖØ-öø-ÿ\s'.-]/g;
 
 type ImportRow = {
   nisn: string;
@@ -40,14 +42,31 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "No data to import" }, { status: 400 });
   }
 
-  const sanitized = payload.records
-    .map((row) => ({
-      nisn: typeof row.nisn === "string" ? row.nisn.trim() : "",
-      name: typeof row.name === "string" ? row.name.trim() : null,
-      token: typeof row.token === "string" ? row.token.trim() : "",
-      isAdmin: typeof row.isAdmin === "boolean" ? row.isAdmin : false,
-    }))
-    .filter((row) => row.nisn.length > 0 && row.token.length >= MIN_TOKEN_LENGTH);
+  const deduped = new Map<string, ImportRow>();
+  let rejected = 0;
+
+  for (const record of payload.records) {
+    const nisnRaw = typeof record.nisn === "string" ? record.nisn.trim() : "";
+    const tokenRaw = typeof record.token === "string" ? record.token.trim() : "";
+    const nameRaw = typeof record.name === "string" ? record.name.trim() : null;
+    const isAdminFlag = typeof record.isAdmin === "boolean" ? record.isAdmin : false;
+
+    if (!NISN_PATTERN.test(nisnRaw) || tokenRaw.length < MIN_TOKEN_LENGTH) {
+      rejected += 1;
+      continue;
+    }
+
+    const safeName = nameRaw ? nameRaw.replace(NAME_SAFE_PATTERN, "").replace(/\s+/g, " ").trim() : null;
+
+    deduped.set(nisnRaw, {
+      nisn: nisnRaw,
+      name: safeName,
+      token: tokenRaw,
+      isAdmin: isAdminFlag,
+    });
+  }
+
+  const sanitized = Array.from(deduped.values());
 
   if (sanitized.length === 0) {
     return NextResponse.json({ message: "No valid rows" }, { status: 400 });
@@ -102,6 +121,7 @@ export async function POST(request: NextRequest) {
       processed: upsertRows.length,
       created,
       updated,
+      rejected,
     },
   });
 
@@ -110,5 +130,6 @@ export async function POST(request: NextRequest) {
     processed: upsertRows.length,
     created,
     updated,
+    rejected,
   });
 }

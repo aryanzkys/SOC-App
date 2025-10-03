@@ -1,0 +1,22 @@
+[build]
+command = "npm run build"
+publish = ".next"
+functions = "netlify/functions"
+
+[[plugins]]
+package = "@netlify/plugin-nextjs"
+
+[[plugins]]
+package = "@netlify/plugin-lighthouse"
+	[plugins.inputs]
+	numberOfRuns = 1
+	fail_deploy_on_score = "performance"
+	output_path = "./.lighthouse"
+
+[[headers]]
+for = "/*"
+	[headers.values]
+	X-Frame-Options = "DENY"
+	X-XSS-Protection = "1; mode=block"
+	Referrer-Policy = "strict-origin-when-cross-origin"
+	Content-Security-Policy = "default-src 'self' https://*.supabase.co; img-src 'self' data:; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;"

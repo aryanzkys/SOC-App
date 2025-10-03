@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { createSessionResponse } from "@/lib/auth";
-import { isRateLimited, resetRateLimit } from "@/lib/rate-limit";
+import { isRateLimited, registerFailedAttempt, resetRateLimit } from "@/lib/rate-limit";
 import { supabaseServerClient } from "@/lib/supabase";
 import { verifyToken } from "@/lib/token";
 
@@ -28,9 +28,14 @@ export async function POST(request: NextRequest) {
     request.headers.get("cf-connecting-ip") ??
     "unknown";
 
-  if (isRateLimited(identifier)) {
+  const rateLimit = await isRateLimited(identifier);
+
+  if (rateLimit.blocked) {
     return NextResponse.json(
-      { message: "Too many login attempts. Please try again later." },
+      {
+        message: "Too many login attempts. Please try again later.",
+        retryAfter: rateLimit.retryAfter,
+      },
       { status: 429 }
     );
   }
@@ -42,16 +47,18 @@ export async function POST(request: NextRequest) {
     .maybeSingle();
 
   if (error || !user || !user.token_hash) {
+    await registerFailedAttempt(identifier);
     return NextResponse.json({ message: "Invalid credentials" }, { status: 401 });
   }
 
   const isValid = await verifyToken(token, user.token_hash);
 
   if (!isValid) {
+    await registerFailedAttempt(identifier);
     return NextResponse.json({ message: "Invalid credentials" }, { status: 401 });
   }
 
-  resetRateLimit(identifier);
+  await resetRateLimit(identifier);
 
   const response = NextResponse.json({
     message: "Login successful",

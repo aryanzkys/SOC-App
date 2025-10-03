@@ -11,7 +11,12 @@ export const metadata: Metadata = {
 
 export const dynamic = "force-dynamic";
 
-export default async function AdminPresensiPage({ searchParams }: { searchParams: Record<string, string | string[] | undefined> }) {
+export default async function AdminPresensiPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const resolvedParams = await searchParams;
   const session = await getSessionFromCookies();
 
   if (!session) {
@@ -26,22 +31,22 @@ export default async function AdminPresensiPage({ searchParams }: { searchParams
   const start = new Date(today);
   start.setDate(start.getDate() - 6);
 
-  const defaultStart = (typeof searchParams.startDate === "string" && searchParams.startDate.length)
-    ? searchParams.startDate
+  const defaultStart = (typeof resolvedParams.startDate === "string" && resolvedParams.startDate.length)
+    ? resolvedParams.startDate
     : start.toISOString().slice(0, 10);
-  const defaultEnd = (typeof searchParams.endDate === "string" && searchParams.endDate.length)
-    ? searchParams.endDate
+  const defaultEnd = (typeof resolvedParams.endDate === "string" && resolvedParams.endDate.length)
+    ? resolvedParams.endDate
     : today.toISOString().slice(0, 10);
 
   const params = new URLSearchParams();
   params.set("startDate", defaultStart);
   params.set("endDate", defaultEnd);
 
-  if (typeof searchParams.nisn === "string" && searchParams.nisn.trim()) {
-    params.set("nisn", searchParams.nisn.trim());
+  if (typeof resolvedParams.nisn === "string" && resolvedParams.nisn.trim()) {
+    params.set("nisn", resolvedParams.nisn.trim());
   }
-  if (typeof searchParams.status === "string" && searchParams.status.trim()) {
-    params.set("status", searchParams.status.trim());
+  if (typeof resolvedParams.status === "string" && resolvedParams.status.trim()) {
+    params.set("status", resolvedParams.status.trim());
   }
 
   const { data, error } = await supabaseServerClient

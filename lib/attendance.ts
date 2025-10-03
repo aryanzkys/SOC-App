@@ -1,3 +1,11 @@
+import dayjs from "dayjs";
+import utc from "dayjs/plugin/utc";
+import timezone from "dayjs/plugin/timezone";
+import "dayjs/locale/id";
+
+dayjs.extend(utc);
+dayjs.extend(timezone);
+
 export type AttendanceStatus = "Hadir" | "Izin" | "Alfa";
 
 export type AttendanceRecord = {
@@ -12,62 +20,26 @@ export type AttendanceRecord = {
 
 const TIMEZONE = "Asia/Jakarta";
 
-export function getJakartaDateInfo(date = new Date()) {
-  const isoDate = new Intl.DateTimeFormat("en-CA", {
-    timeZone: TIMEZONE,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(date);
-
-  const weekday = new Intl.DateTimeFormat("en-US", {
-    timeZone: TIMEZONE,
-    weekday: "long",
-  }).format(date);
-
-  const readableDate = new Intl.DateTimeFormat("id-ID", {
-    timeZone: TIMEZONE,
-    weekday: "long",
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-  }).format(date);
+export function getJakartaDateInfo(reference?: string | Date) {
+  const now = reference ? dayjs(reference) : dayjs();
+  const jakartaNow = now.tz(TIMEZONE);
 
   return {
-    isoDate,
-    isSaturday: weekday.toLowerCase() === "saturday",
-    weekday,
-    readableDate,
+    isoDate: jakartaNow.format("YYYY-MM-DD"),
+    isSaturday: jakartaNow.day() === 6,
+    weekday: jakartaNow.format("dddd"),
+    readableDate: jakartaNow.locale("id").format("dddd, D MMMM YYYY"),
   };
 }
 
 export function formatAttendanceDate(dateString: string) {
-  const isoSource = `${dateString}T00:00:00+07:00`;
-  return new Intl.DateTimeFormat("id-ID", {
-    timeZone: TIMEZONE,
-    weekday: "long",
-    day: "2-digit",
-    month: "long",
-    year: "numeric",
-  }).format(new Date(isoSource));
+  return dayjs.tz(dateString, TIMEZONE).locale("id").format("dddd, DD MMMM YYYY");
 }
 
 export function formatAttendanceTime(timestamp: string) {
-  return new Intl.DateTimeFormat("id-ID", {
-    timeZone: TIMEZONE,
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(timestamp));
+  return dayjs(timestamp).tz(TIMEZONE).locale("id").format("HH.mm");
 }
 
 export function formatAttendanceDateTime(timestamp: string) {
-  return new Intl.DateTimeFormat("id-ID", {
-    timeZone: TIMEZONE,
-    weekday: "long",
-    day: "2-digit",
-    month: "long",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(timestamp));
+  return dayjs(timestamp).tz(TIMEZONE).locale("id").format("dddd, DD MMMM YYYY HH.mm");
 }
