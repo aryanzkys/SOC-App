@@ -18,6 +18,7 @@ export default async function DashboardPage() {
     redirect("/login");
   }
 
+  // Ambil data user
   const { data: userRecord } = await supabaseServerClient
     .from("users")
     .select("name, nisn, is_admin")
@@ -26,6 +27,7 @@ export default async function DashboardPage() {
 
   const { isoDate, isSaturday, readableDate } = getJakartaDateInfo();
 
+  // Cek presensi hari ini
   const todayResult = await supabaseServerClient
     .from("attendance")
     .select("id, date, status, created_at, nisn")
@@ -33,15 +35,17 @@ export default async function DashboardPage() {
     .eq("date", isoDate)
     .maybeSingle();
 
-  const todayRecord = todayResult.error && todayResult.error.code !== "PGRST116"
-    ? null
-    : todayResult.data
+  const todayRecord =
+    todayResult.error && todayResult.error.code !== "PGRST116"
+      ? null
+      : todayResult.data
       ? {
           ...todayResult.data,
           nisn: todayResult.data.nisn ?? (userRecord?.nisn ?? session.nisn),
         }
       : null;
 
+  // Ambil riwayat 10 terakhir
   const historyResult = await supabaseServerClient
     .from("attendance")
     .select("id, date, status, created_at, nisn")
@@ -55,21 +59,30 @@ export default async function DashboardPage() {
       nisn: record.nisn ?? (userRecord?.nisn ?? session.nisn),
     })) ?? []);
 
+  // Hitung statistik presensi sederhana
+  const totalHadir = attendanceHistory.filter((r) => r.status === "Hadir").length;
+  const totalAbsen = attendanceHistory.filter((r) => r.status === "Absen").length;
+  const totalPertemuan = attendanceHistory.length;
+  const persentase =
+    totalPertemuan > 0
+      ? ((totalHadir / totalPertemuan) * 100).toFixed(1) + "%"
+      : "0%";
+
   const stats = [
     {
-      title: "Posture",
-      value: "99.2%",
-      note: "Current detection coverage across SOC surfaces",
+      title: "Total Hadir",
+      value: totalHadir.toString(),
+      note: "Jumlah pertemuan yang diikuti",
     },
     {
-      title: "Response",
-      value: "2m 18s",
-      note: "Median containment time in the last 24 hours",
+      title: "Total Absen",
+      value: totalAbsen.toString(),
+      note: "Jumlah pertemuan yang terlewat",
     },
     {
-      title: "Compliance",
-      value: "98",
-      note: "Aligned with the SOC gold-standard operational index",
+      title: "Kehadiran",
+      value: persentase,
+      note: "Persentase kehadiranmu",
     },
   ];
 
