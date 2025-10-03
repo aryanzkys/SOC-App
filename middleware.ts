@@ -9,7 +9,7 @@ if (!JWT_SECRET) {
 }
 
 const AUTH_PAGES = ["/login", "/admin/login"];
-const PROTECTED_PAGES = ["/dashboard", "/profile", "/admin"];
+const MEMBER_PROTECTED_PAGES = ["/dashboard", "/profile"];
 const PROTECTED_APIS = [
   "/api/auth/change-token",
   "/api/attendance",
@@ -48,8 +48,22 @@ export async function middleware(request: NextRequest) {
     }
   }
 
-  // Protected pages
-  const isProtectedPage = PROTECTED_PAGES.some((path) => pathname.startsWith(path));
+  // Admin section guard (excluding the login page itself)
+  const isAdminSection = pathname.startsWith("/admin") && pathname !== "/admin/login";
+  if (isAdminSection) {
+    if (!session) {
+      const url = new URL("/admin/login", request.url);
+      url.searchParams.set("from", pathname);
+      return NextResponse.redirect(url);
+    }
+
+    if (!session.is_admin) {
+      return NextResponse.redirect(new URL("/dashboard", request.url));
+    }
+  }
+
+  // Protected member pages
+  const isProtectedPage = MEMBER_PROTECTED_PAGES.some((path) => pathname.startsWith(path));
   if (isProtectedPage && !session) {
     const url = new URL("/login", request.url);
     url.searchParams.set("from", pathname);
@@ -63,16 +77,7 @@ export async function middleware(request: NextRequest) {
   }
 
   // Admin page restriction
-  if (pathname.startsWith("/admin") && session && !session.is_admin) {
-    return NextResponse.redirect(new URL("/dashboard", request.url));
-  }
-
-  // Admin API restriction
-  if (
-    pathname.startsWith("/api/admin") &&
-    session &&
-    !session.is_admin
-  ) {
+  if (pathname.startsWith("/api/admin") && session && !session.is_admin) {
     return NextResponse.json({ message: "Forbidden" }, { status: 403 });
   }
 
