@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { requireSession } from "@/lib/auth";
+import { recordAuditLog, resolveAuditActor } from "@/lib/audit";
 import { supabaseServerClient } from "@/lib/supabase";
 import { hashToken } from "@/lib/token";
 
@@ -49,6 +50,15 @@ export async function POST(request: NextRequest) {
       status === 409 ? "User with this NISN already exists" : "Failed to create user";
     return NextResponse.json({ message }, { status });
   }
+
+  const { actorName, actorNisn } = await resolveAuditActor(session.sub, session.nisn);
+  await recordAuditLog({
+    actorId: session.sub,
+    actorName,
+    actorNisn,
+    action: "user_create",
+    metadata: { userId: data.id, nisn },
+  });
 
   return NextResponse.json({
     message: "User created",

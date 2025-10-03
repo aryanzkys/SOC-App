@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { requireSession } from "@/lib/auth";
+import { recordAuditLog, resolveAuditActor } from "@/lib/audit";
 import { supabaseServerClient } from "@/lib/supabase";
 import { hashToken } from "@/lib/token";
 
@@ -37,6 +38,15 @@ export async function PATCH(request: NextRequest) {
   if (error) {
     return NextResponse.json({ message: "Failed to reset token" }, { status: 500 });
   }
+
+  const { actorName, actorNisn } = await resolveAuditActor(session.sub, session.nisn);
+  await recordAuditLog({
+    actorId: session.sub,
+    actorName,
+    actorNisn,
+    action: "token_reset",
+    metadata: { userId },
+  });
 
   return NextResponse.json({ message: "Token reset" });
 }

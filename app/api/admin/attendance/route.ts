@@ -14,10 +14,34 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ message: "Forbidden" }, { status: 403 });
   }
 
-  const result = await supabaseServerClient
+  const searchParams = request.nextUrl.searchParams;
+  const nisnQuery = searchParams.get("nisn");
+  const statusQuery = searchParams.get("status");
+  const startDate = searchParams.get("startDate");
+  const endDate = searchParams.get("endDate");
+
+  let query = supabaseServerClient
     .from("attendance")
     .select("id, user_id, nisn, status, date, created_at, users(name)")
     .order("date", { ascending: false });
+
+  if (nisnQuery) {
+    query = query.ilike("nisn", `%${nisnQuery.trim()}%`);
+  }
+
+  if (statusQuery && ["Hadir", "Izin", "Alfa"].includes(statusQuery)) {
+    query = query.eq("status", statusQuery as AttendanceStatus);
+  }
+
+  if (startDate) {
+    query = query.gte("date", startDate);
+  }
+
+  if (endDate) {
+    query = query.lte("date", endDate);
+  }
+
+  const result = await query;
 
   if (result.error) {
     return NextResponse.json({ message: "Gagal mengambil data presensi" }, { status: 500 });

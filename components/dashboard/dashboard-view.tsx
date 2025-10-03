@@ -87,7 +87,7 @@ export function DashboardView({ user, stats, attendance }: DashboardViewProps) {
       setTimeout(() => {
         router.refresh();
       }, 800);
-    } catch (error) {
+  } catch {
       setMarkState("error");
       setMarkMessage("Terjadi kesalahan. Coba lagi.");
     }

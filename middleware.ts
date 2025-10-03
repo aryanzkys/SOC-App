@@ -15,6 +15,7 @@ const PROTECTED_APIS = [
   "/api/attendance",
   "/api/admin/create-user",
   "/api/admin/reset-token",
+  "/api/admin/users",
   "/api/admin/attendance",
 ];
 

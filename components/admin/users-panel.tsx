@@ -1,24 +1,33 @@
 "use client";
 
-import { type ComponentProps, useCallback, useMemo, useRef, useState } from "react";
+import { type FormEvent, type ReactNode, useCallback, useMemo, useState } from "react";
+import {
+  createColumnHelper,
+  flexRender,
+  getCoreRowModel,
+  getPaginationRowModel,
+  useReactTable,
+} from "@tanstack/react-table";
 import { AnimatePresence, motion } from "framer-motion";
-import { Download, Plus, ShieldCheck, ShieldPlus, Upload } from "lucide-react";
+import { Download, RefreshCcw, Search, Upload, Wand2 } from "lucide-react";
 import { useRouter } from "next/navigation";
+import Papa from "papaparse";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import {
-  Table,
-  TableBody,
-  TableCaption,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { fadeInUp } from "@/utils/motion";
 
@@ -33,222 +42,264 @@ type UsersPanelProps = {
   users: UserRecord[];
 };
 
-type Status = "idle" | "loading" | "success" | "error";
+type ImportResult = {
+  message: string;
+  processed: number;
+  created: number;
+  updated: number;
+};
 
 type CreateFormState = {
   nisn: string;
   name: string;
-  token: string;
   is_admin: boolean;
 };
 
+type RoleFilter = "all" | "admin" | "member";
+
+const columnHelper = createColumnHelper<UserRecord>();
+
 export function UsersPanel({ users }: UsersPanelProps) {
   const router = useRouter();
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [roleFilter, setRoleFilter] = useState<RoleFilter>("all");
 
-  const [createForm, setCreateForm] = useState<CreateFormState>({
-    nisn: "",
-    name: "",
-    token: "",
-    is_admin: false,
-  });
-  const [createStatus, setCreateStatus] = useState<Status>("idle");
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [tokenDialogOpen, setTokenDialogOpen] = useState(false);
+
+  const [importResult, setImportResult] = useState<ImportResult | null>(null);
+  const [importing, setImporting] = useState(false);
+
+  const [createForm, setCreateForm] = useState<CreateFormState>({ nisn: "", name: "", is_admin: false });
+  const [createLoading, setCreateLoading] = useState(false);
   const [createMessage, setCreateMessage] = useState<string | null>(null);
+  const [createToken, setCreateToken] = useState<string | null>(null);
 
-  const [resetUserId, setResetUserId] = useState<string | null>(null);
-  const [resetToken, setResetToken] = useState("");
-  const [resetStatus, setResetStatus] = useState<Status>("idle");
-  const [resetMessage, setResetMessage] = useState<string | null>(null);
+  const [selectedUser, setSelectedUser] = useState<UserRecord | null>(null);
+  const [generatedToken, setGeneratedToken] = useState<string | null>(null);
+  const [tokenLoading, setTokenLoading] = useState(false);
 
-  const sortedUsers = useMemo(
-    () =>
-      [...users].sort((a, b) => {
-        if (a.is_admin && !b.is_admin) return -1;
-        if (!a.is_admin && b.is_admin) return 1;
-        return a.nisn.localeCompare(b.nisn);
+  const filteredUsers = useMemo(() => {
+    const normalized = searchTerm.trim().toLowerCase();
+    return users.filter((user) => {
+      const matchesSearch =
+        normalized.length === 0 ||
+        user.nisn.toLowerCase().includes(normalized) ||
+        (user.name ?? "").toLowerCase().includes(normalized);
+      const matchesRole =
+        roleFilter === "all" || (roleFilter === "admin" && user.is_admin) || (roleFilter === "member" && !user.is_admin);
+      return matchesSearch && matchesRole;
+    });
+  }, [users, searchTerm, roleFilter]);
+
+  const columns = useMemo(
+    () => [
+      columnHelper.accessor("nisn", {
+        header: "NISN",
+        cell: (info) => <span className="font-mono text-sm text-foreground/80">{info.getValue()}</span>,
       }),
-    [users]
+      columnHelper.accessor("name", {
+        header: "Nama",
+        cell: (info) => info.getValue() ?? "—",
+      }),
+      columnHelper.accessor("is_admin", {
+        header: "Role",
+        cell: (info) => (
+          <span
+            className={cn(
+              "inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.3em]",
+              info.getValue()
+                ? "border-[#8B0000]/40 bg-[#8B0000]/15 text-[#ffd5d5]"
+                : "border-white/25 bg-white/10 text-foreground/70"
+            )}
+          >
+            {info.getValue() ? "Admin" : "Member"}
+          </span>
+        ),
+      }),
+      columnHelper.display({
+        id: "actions",
+        header: "Aksi",
+        cell: ({ row }) => (
+          <div className="flex justify-end">
+            <Button
+              variant="outline"
+              className="rounded-2xl border-white/30 bg-white/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-foreground"
+              onClick={() => {
+                setSelectedUser(row.original);
+                setGeneratedToken(null);
+                setTokenDialogOpen(true);
+              }}
+            >
+              Generate token
+            </Button>
+          </div>
+        ),
+      }),
+    ],
+    []
+  );
+
+  const table = useReactTable({
+    data: filteredUsers,
+    columns,
+    getCoreRowModel: getCoreRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
+  });
+
+  const handleExport = useCallback(async () => {
+    try {
+      const response = await fetch("/api/admin/users/export");
+      if (!response.ok) {
+        throw new Error("Failed to export users");
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `soc-users-${Date.now()}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error(error);
+    }
+  }, []);
+
+  const handleImport = useCallback(
+    async (file: File) => {
+      setImporting(true);
+      setImportResult(null);
+
+      const text = await file.text();
+      const parsed = Papa.parse(text, { header: true, skipEmptyLines: true });
+
+      const rows = (parsed.data as Record<string, string>[]).map((row) => ({
+        nisn: (row.NISN ?? row.nisn ?? "").trim(),
+        name: (row.Nama ?? row.nama ?? "").trim(),
+        token: (row.Token ?? row.token ?? "").trim(),
+        isAdmin: ((row.Role ?? row.role ?? "Member").toLowerCase() === "admin"),
+      }));
+
+      const validRows = rows.filter((row) => row.nisn.length > 0 && row.token.length >= 8);
+
+      try {
+        const response = await fetch("/api/admin/users/import", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            records: validRows.map((row) => ({
+              nisn: row.nisn,
+              name: row.name || null,
+              token: row.token,
+              isAdmin: row.isAdmin,
+            })),
+          }),
+        });
+
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({ message: "Gagal impor" }));
+          setImportResult({ message: payload.message, processed: 0, created: 0, updated: 0 });
+        } else {
+          const json = (await response.json()) as ImportResult;
+          setImportResult(json);
+          router.refresh();
+        }
+      } catch (error) {
+        console.error(error);
+        setImportResult({ message: "Terjadi kesalahan saat import", processed: 0, created: 0, updated: 0 });
+      } finally {
+        setImporting(false);
+      }
+    },
+    [router]
   );
 
   const handleCreate = useCallback(
-    async (event: React.FormEvent<HTMLFormElement>) => {
+    async (event: FormEvent<HTMLFormElement>) => {
       event.preventDefault();
-      setCreateStatus("loading");
+      setCreateLoading(true);
       setCreateMessage(null);
-
-      if (createForm.token.length < 8) {
-        setCreateStatus("error");
-        setCreateMessage("Token must be at least 8 characters.");
-        return;
-      }
+      const token = generateReadableToken();
 
       try {
         const response = await fetch("/api/admin/create-user", {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             nisn: createForm.nisn.trim(),
             name: createForm.name.trim().length ? createForm.name.trim() : null,
-            token: createForm.token,
+            token,
             isAdmin: createForm.is_admin,
           }),
         });
 
-        const payload = await response.json().catch(() => ({ message: "Unable to create user" }));
+        const payload = await response.json().catch(() => ({ message: "Gagal membuat user" }));
 
         if (!response.ok) {
-          setCreateStatus("error");
-          setCreateMessage(payload.message ?? "Failed to create user.");
+          setCreateMessage(payload.message ?? "Gagal membuat user");
+          setCreateLoading(false);
           return;
         }
 
-        setCreateStatus("success");
-        setCreateMessage("User created successfully.");
-        setCreateForm({ nisn: "", name: "", token: "", is_admin: false });
+        setCreateToken(token);
+        setCreateMessage("User berhasil dibuat. Simpan token berikut untuk diserahkan ke user.");
         router.refresh();
-      } catch {
-        setCreateStatus("error");
-        setCreateMessage("Unexpected error. Please try again.");
+        setCreateForm({ nisn: "", name: "", is_admin: false });
+      } catch (error) {
+        console.error(error);
+        setCreateMessage("Terjadi kesalahan tak terduga");
+      } finally {
+        setCreateLoading(false);
       }
     },
     [createForm, router]
   );
 
-  const handleReset = useCallback(
-    async (event: React.FormEvent<HTMLFormElement>) => {
-      event.preventDefault();
-      if (!resetUserId) return;
-      setResetStatus("loading");
-      setResetMessage(null);
+  const handleGenerateToken = useCallback(async () => {
+    if (!selectedUser) return;
+    setTokenLoading(true);
+    setGeneratedToken(null);
+    const token = generateReadableToken();
 
-      if (resetToken.length < 8) {
-        setResetStatus("error");
-        setResetMessage("Token must be at least 8 characters.");
-        return;
-      }
+    try {
+      const response = await fetch("/api/admin/reset-token", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: selectedUser.id, newToken: token }),
+      });
 
-      try {
-        const response = await fetch("/api/admin/reset-token", {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ userId: resetUserId, newToken: resetToken }),
-        });
-
-        const payload = await response.json().catch(() => ({ message: "Unable to reset token" }));
-
-        if (!response.ok) {
-          setResetStatus("error");
-          setResetMessage(payload.message ?? "Failed to reset token.");
-          return;
-        }
-
-        setResetStatus("success");
-        setResetMessage("Token reset successfully.");
-        setResetToken("");
-        setResetUserId(null);
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({ message: "Gagal reset token" }));
+        setGeneratedToken(`Error: ${payload.message ?? "Gagal reset token"}`);
+      } else {
+        setGeneratedToken(token);
         router.refresh();
-      } catch {
-        setResetStatus("error");
-        setResetMessage("Unexpected error. Please try again.");
       }
-    },
-    [resetToken, resetUserId, router]
-  );
+    } catch (error) {
+      console.error(error);
+      setGeneratedToken("Terjadi kesalahan saat reset token");
+    } finally {
+      setTokenLoading(false);
+    }
+  }, [router, selectedUser]);
 
-  const triggerImport = useCallback(() => {
-    fileInputRef.current?.click();
-  }, []);
-
-  const handleImport = useCallback(
-    async (event: React.ChangeEvent<HTMLInputElement>) => {
-      const file = event.target.files?.[0];
-      if (!file) return;
-
-      const text = await file.text();
-      const rows = text
-        .split(/\r?\n/)
-        .map((row) => row.trim())
-        .filter(Boolean);
-
-      if (rows.length <= 1) {
-        setCreateStatus("error");
-        setCreateMessage("CSV must contain header and at least one row.");
-        event.target.value = "";
-        return;
-      }
-
-      const [, ...dataRows] = rows;
-      let successCount = 0;
-      let failureCount = 0;
-
-      for (const row of dataRows) {
-        const columns = row.split(",").map((value) => value.trim());
-        const [nisn, name = "", token = "", isAdmin = "false"] = columns;
-
-        if (!nisn || token.length < 8) {
-          failureCount += 1;
-          continue;
-        }
-
-        try {
-          const response = await fetch("/api/admin/create-user", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              nisn,
-              name: name.length ? name : null,
-              token,
-              isAdmin: isAdmin.toLowerCase() === "true",
-            }),
-          });
-
-          if (response.ok) {
-            successCount += 1;
-          } else {
-            failureCount += 1;
-          }
-        } catch {
-          failureCount += 1;
-        }
-      }
-
-      setCreateStatus("success");
-      setCreateMessage(`Imported ${successCount} user(s). ${failureCount ? `${failureCount} failed.` : ""}`.trim());
-      router.refresh();
-      event.target.value = "";
-    },
-    [router]
-  );
-
-  const handleExport = useCallback(() => {
-    const header = "nisn,name,is_admin";
-    const body = users
-      .map((user) => `${user.nisn},${user.name?.replace(/,/g, " ") ?? ""},${user.is_admin}`)
-      .join("\n");
-    const csv = `${header}\n${body}`;
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.setAttribute("download", `soc-users-${Date.now()}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-  }, [users]);
+  const resetFilters = () => {
+    setSearchTerm("");
+    setRoleFilter("all");
+  };
 
   return (
-    <div className="space-y-10">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="space-y-1">
+    <motion.div variants={fadeInUp} initial="hidden" animate="visible" className="space-y-10">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="space-y-2">
           <p className="text-xs uppercase tracking-[0.35em] text-foreground/60">Admin Ops</p>
-          <h1 className="text-3xl font-semibold text-foreground sm:text-4xl">SOC Membership Registry</h1>
+          <h2 className="text-3xl font-semibold text-foreground">Manajemen Anggota SOC</h2>
+          <p className="text-sm text-muted-foreground">
+            Pantau kredensial anggota, impor massal via CSV, dan rotasi token dengan aman.
+          </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <Button
@@ -258,256 +309,324 @@ export function UsersPanel({ users }: UsersPanelProps) {
             <Download className="h-4 w-4" /> Export CSV
           </Button>
           <Button
-            onClick={triggerImport}
             variant="outline"
+            onClick={() => setImportDialogOpen(true)}
             className="flex items-center gap-2 rounded-2xl border-white/30 bg-white/10 px-4 py-3 text-sm font-semibold text-foreground shadow-[0_18px_45px_rgba(139,0,0,0.15)] backdrop-blur"
           >
             <Upload className="h-4 w-4" /> Import CSV
           </Button>
-          <input ref={fileInputRef} type="file" accept=".csv" className="hidden" onChange={handleImport} />
+          <Button
+            variant="outline"
+            onClick={() => setCreateDialogOpen(true)}
+            className="flex items-center gap-2 rounded-2xl border-white/30 bg-white/10 px-4 py-3 text-sm font-semibold text-foreground shadow-[0_18px_45px_rgba(139,0,0,0.15)] backdrop-blur"
+          >
+            <Wand2 className="h-4 w-4" /> Tambah User
+          </Button>
         </div>
       </div>
 
-      <Card className="rounded-[36px] border-white/15 bg-white/12 p-8 shadow-[0_30px_80px_rgba(139,0,0,0.2)] backdrop-blur-2xl dark:border-white/10 dark:bg-white/5">
-        <CardHeader className="space-y-3 p-0">
-          <CardTitle className="flex items-center gap-2 text-2xl font-semibold text-foreground">
-            <ShieldPlus className="h-6 w-6 text-[#8B0000]" /> Register New Member
-          </CardTitle>
-          <CardDescription className="text-base text-muted-foreground">
-            Assign a secure token and optional admin privileges. Tokens are hashed instantly before storage.
-          </CardDescription>
+      <Card className="rounded-[36px] border-white/15 bg-white/12 shadow-[0_30px_80px_rgba(139,0,0,0.2)] backdrop-blur-2xl">
+        <CardHeader className="border-b border-white/10 p-6">
+          <CardTitle className="text-xl text-foreground">Filter &amp; Pencarian</CardTitle>
+          <CardDescription>Gunakan pencarian teks dan filter role untuk memfokuskan daftar.</CardDescription>
         </CardHeader>
-        <CardContent className="mt-8 p-0">
-          <motion.form
-            className="grid gap-6 md:grid-cols-2"
-            onSubmit={handleCreate}
-            variants={fadeInUp}
-            initial="hidden"
-            animate="visible"
-          >
-            <FloatingField
-              id="create-nisn"
-              label="NISN"
-              value={createForm.nisn}
-              onChange={(event) => setCreateForm((prev) => ({ ...prev, nisn: event.target.value }))}
-              inputMode="numeric"
-              required
-            />
-            <FloatingField
-              id="create-name"
-              label="Name"
-              value={createForm.name}
-              onChange={(event) => setCreateForm((prev) => ({ ...prev, name: event.target.value }))}
-            />
-            <FloatingField
-              id="create-token"
-              label="Token"
-              type="password"
-              value={createForm.token}
-              onChange={(event) => setCreateForm((prev) => ({ ...prev, token: event.target.value }))}
-              required
-            />
-            <div className="flex flex-col justify-end gap-3 rounded-2xl border border-white/20 bg-white/10 px-4 py-3">
-              <Label htmlFor="create-admin" className="text-xs font-semibold uppercase tracking-[0.35em] text-[#8B0000]/80">
-                Admin Privileges
-              </Label>
-              <div className="flex items-center justify-between">
-                <p className="text-sm text-muted-foreground">Grants access to user management & credential rotation.</p>
+        <CardContent className="grid gap-4 p-6 md:grid-cols-[2fr_1fr_auto]">
+          <div className="space-y-2">
+            <Label className="text-xs uppercase tracking-[0.3em] text-foreground/60">Cari</Label>
+            <div className="flex items-center gap-3 rounded-2xl border border-white/25 bg-white/10 px-4 py-2">
+              <Search className="h-4 w-4 text-foreground/50" />
+              <input
+                value={searchTerm}
+                onChange={(event) => setSearchTerm(event.target.value)}
+                placeholder="Cari nama atau NISN"
+                className="flex-1 bg-transparent text-sm text-foreground placeholder:text-foreground/40 focus:outline-none"
+              />
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label className="text-xs uppercase tracking-[0.3em] text-foreground/60">Role</Label>
+            <select
+              value={roleFilter}
+              onChange={(event) => setRoleFilter(event.target.value as RoleFilter)}
+              className="h-12 rounded-2xl border border-white/25 bg-white/10 px-4 text-sm text-foreground"
+            >
+              <option value="all" className="bg-[#1c0606]">
+                Semua
+              </option>
+              <option value="admin" className="bg-[#1c0606]">
+                Admin
+              </option>
+              <option value="member" className="bg-[#1c0606]">
+                Member
+              </option>
+            </select>
+          </div>
+          <div className="flex items-end">
+            <Button
+              variant="outline"
+              onClick={resetFilters}
+              className="w-full rounded-2xl border-white/30 bg-white/10 px-4 py-3 text-xs font-semibold uppercase tracking-[0.2em] text-foreground"
+            >
+              <RefreshCcw className="mr-2 h-4 w-4" /> Reset
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="rounded-[36px] border-white/15 bg-white/12 shadow-[0_30px_80px_rgba(139,0,0,0.2)] backdrop-blur-2xl">
+        <CardHeader className="border-b border-white/10 p-6">
+          <CardTitle className="text-xl text-foreground">Daftar Users</CardTitle>
+          <CardDescription>{filteredUsers.length} pengguna cocok dengan filter saat ini.</CardDescription>
+        </CardHeader>
+        <CardContent className="p-0">
+          <div className="overflow-x-auto">
+            <Table className="min-w-full text-sm">
+              <TableHeader>
+                {table.getHeaderGroups().map((headerGroup) => (
+                  <TableRow key={headerGroup.id} className="bg-white/10 text-xs uppercase tracking-[0.3em] text-foreground/60">
+                    {headerGroup.headers.map((header) => (
+                      <TableHead key={header.id} className="px-4 py-3">
+                        {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
+                      </TableHead>
+                    ))}
+                  </TableRow>
+                ))}
+              </TableHeader>
+              <TableBody>
+                {table.getRowModel().rows.length ? (
+                  table.getRowModel().rows.map((row) => (
+                    <TableRow key={row.id} className="border-white/10">
+                      {row.getVisibleCells().map((cell) => (
+                        <TableCell key={cell.id} className="px-4 py-3">
+                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  ))
+                ) : (
+                  <TableRow>
+                    <TableCell colSpan={columns.length} className="py-10 text-center text-sm text-muted-foreground">
+                      Tidak ada data sesuai pencarian.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+          <div className="flex flex-col gap-3 border-t border-white/10 px-6 py-4 md:flex-row md:items-center md:justify-between">
+            <p className="text-xs text-muted-foreground">
+              Menampilkan {table.getRowModel().rows.length} dari {filteredUsers.length} user.
+            </p>
+            <div className="flex items-center gap-3">
+              <Button
+                variant="outline"
+                onClick={() => table.previousPage()}
+                disabled={!table.getCanPreviousPage()}
+                className="rounded-2xl border-white/30 bg-white/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-foreground"
+              >
+                Prev
+              </Button>
+              <span className="text-sm text-muted-foreground">Halaman {table.getState().pagination.pageIndex + 1}</span>
+              <Button
+                variant="outline"
+                onClick={() => table.nextPage()}
+                disabled={!table.getCanNextPage()}
+                className="rounded-2xl border-white/30 bg-white/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-foreground"
+              >
+                Next
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Import CSV Users</DialogTitle>
+            <DialogDescription>
+              Format kolom: <strong>NISN, Nama, Token, Role</strong>. Role opsional (default member). Token minimal 8 karakter.
+            </DialogDescription>
+          </DialogHeader>
+          <Tabs defaultValue="upload">
+            <TabsList className="mb-4">
+              <TabsTrigger value="upload">Upload CSV</TabsTrigger>
+              <TabsTrigger value="template">Template</TabsTrigger>
+            </TabsList>
+            <TabsContent value="upload" className="space-y-4">
+              <Input
+                type="file"
+                accept=".csv"
+                disabled={importing}
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) {
+                    handleImport(file);
+                    event.target.value = "";
+                  }
+                }}
+              />
+              {importResult ? (
+                <div className="rounded-2xl border border-white/20 bg-white/10 p-4 text-sm text-white">
+                  <p>{importResult.message}</p>
+                  <p className="text-xs text-white/70">
+                    Diproses: {importResult.processed} • Dibuat: {importResult.created} • Diperbarui: {importResult.updated}
+                  </p>
+                </div>
+              ) : null}
+            </TabsContent>
+            <TabsContent value="template" className="space-y-4 text-sm text-white/80">
+              <p>Contoh data:</p>
+              <pre className="rounded-2xl border border-white/20 bg-[#1f0606] p-4 text-xs text-white/80">
+NISN,Nama,Token,Role
+12000123,Andi Pratama,securePass123,Admin
+12000456,Sinta Dewi,anggota789,Member
+              </pre>
+            </TabsContent>
+          </Tabs>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setImportDialogOpen(false)}
+              className="rounded-2xl border-white/30 bg-white/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-foreground"
+            >
+              Tutup
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
+        <DialogContent>
+          <form onSubmit={handleCreate} className="space-y-6">
+            <DialogHeader>
+              <DialogTitle>Tambah User</DialogTitle>
+              <DialogDescription>
+                Token akan digenerate otomatis dan hanya ditampilkan satu kali setelah user berhasil dibuat.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-4">
+              <Field label="NISN" required>
+                <Input
+                  value={createForm.nisn}
+                  onChange={(event) => setCreateForm((prev) => ({ ...prev, nisn: event.target.value }))}
+                  required
+                  inputMode="numeric"
+                />
+              </Field>
+              <Field label="Nama">
+                <Input
+                  value={createForm.name}
+                  onChange={(event) => setCreateForm((prev) => ({ ...prev, name: event.target.value }))}
+                />
+              </Field>
+              <div className="flex items-center justify-between rounded-2xl border border-white/20 bg-white/10 px-4 py-3">
+                <span className="text-sm text-muted-foreground">Jadikan admin?</span>
                 <Switch
-                  id="create-admin"
                   checked={createForm.is_admin}
                   onCheckedChange={(value) => setCreateForm((prev) => ({ ...prev, is_admin: value }))}
                 />
               </div>
             </div>
-            <div className="md:col-span-2">
-              <motion.div whileHover={{ scale: createStatus === "loading" ? 1 : 1.01 }} whileTap={{ scale: createStatus === "loading" ? 1 : 0.98 }}>
-                <Button
-                  type="submit"
-                  className="flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-br from-[#8B0000] via-[#b21212] to-[#360000] py-4 text-base font-semibold text-white shadow-[0_22px_45px_rgba(139,0,0,0.35)]"
-                  disabled={createStatus === "loading"}
+            <AnimatePresence mode="wait">
+              {createMessage ? (
+                <motion.div
+                  key={createMessage}
+                  initial={{ opacity: 0, y: -6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -6 }}
+                  className="rounded-2xl border border-white/20 bg-white/10 p-4 text-sm text-white"
                 >
-                  <Plus className="h-5 w-5" />
-                  {createStatus === "loading" ? "Registering" : "Create user"}
-                </Button>
-              </motion.div>
-            </div>
-          </motion.form>
-
-          <AnimatePresence mode="wait">
-            {createMessage ? (
-              <motion.p
-                key={createStatus}
-                className={cn(
-                  "mt-6 rounded-2xl border px-4 py-3 text-sm font-medium",
-                  createStatus === "success"
-                    ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-100"
-                    : "border-red-500/40 bg-red-500/10 text-red-100"
-                )}
-                initial={{ opacity: 0, y: -4 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -4 }}
+                  <p>{createMessage}</p>
+                  {createToken ? (
+                    <p className="mt-2 font-mono text-sm text-amber-200">Token: {createToken}</p>
+                  ) : null}
+                </motion.div>
+              ) : null}
+            </AnimatePresence>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setCreateDialogOpen(false)}
+                className="rounded-2xl border-white/30 bg-white/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-foreground"
               >
-                {createMessage}
-              </motion.p>
-            ) : null}
-          </AnimatePresence>
-        </CardContent>
-      </Card>
-
-      <Card className="rounded-[36px] border-white/15 bg-white/12 p-8 shadow-[0_30px_80px_rgba(139,0,0,0.2)] backdrop-blur-2xl dark:border-white/10 dark:bg-white/5">
-        <CardHeader className="space-y-3 p-0">
-          <CardTitle className="flex items-center gap-2 text-2xl font-semibold text-foreground">
-            <ShieldCheck className="h-6 w-6 text-[#8B0000]" /> Active Roster
-          </CardTitle>
-          <CardDescription className="text-base text-muted-foreground">
-            Monitor current SOC members. Reset credentials instantly when required.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="mt-8 space-y-6 p-0">
-          <Table className="rounded-3xl border border-white/15 bg-white/5 shadow-[0_18px_45px_rgba(139,0,0,0.18)] backdrop-blur">
-            <TableHeader>
-              <TableRow className="bg-white/10 text-xs uppercase tracking-[0.3em] text-foreground/70">
-                <TableHead className="px-4 py-3">NISN</TableHead>
-                <TableHead className="px-4 py-3">Name</TableHead>
-                <TableHead className="px-4 py-3">Role</TableHead>
-                <TableHead className="px-4 py-3 text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {sortedUsers.map((user) => (
-                <TableRow key={user.id} className="border-white/10">
-                  <TableCell className="px-4 py-3 font-mono text-sm text-foreground">{user.nisn}</TableCell>
-                  <TableCell className="px-4 py-3 text-sm text-foreground/80">{user.name ?? "—"}</TableCell>
-                  <TableCell className="px-4 py-3">
-                    <span className={cn(
-                      "inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.3em]",
-                      user.is_admin
-                        ? "border-[#8B0000]/40 bg-[#8B0000]/15 text-[#8B0000]"
-                        : "border-white/30 bg-white/10 text-foreground/70"
-                    )}>
-                      {user.is_admin ? "Admin" : "Member"}
-                    </span>
-                  </TableCell>
-                  <TableCell className="px-4 py-3 text-right">
-                    <Button
-                      variant="outline"
-                      className="rounded-2xl border-white/30 bg-white/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-foreground"
-                      onClick={() => {
-                        setResetUserId(user.id);
-                        setResetToken("");
-                        setResetStatus("idle");
-                        setResetMessage(null);
-                      }}
-                    >
-                      Reset token
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-            <TableCaption>Export data for audits or import updates from CSV templates.</TableCaption>
-          </Table>
-
-          <AnimatePresence mode="wait">
-            {resetUserId ? (
-              <motion.form
-                key={resetUserId}
-                className="grid gap-4 rounded-3xl border border-white/15 bg-white/10 p-6 shadow-[0_18px_45px_rgba(139,0,0,0.18)] backdrop-blur"
-                onSubmit={handleReset}
-                initial={{ opacity: 0, y: -8 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -8 }}
+                Batal
+              </Button>
+              <Button
+                type="submit"
+                disabled={createLoading}
+                className="rounded-2xl bg-gradient-to-br from-[#8B0000] via-[#b21212] to-[#360000] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-white"
               >
-                <p className="text-xs uppercase tracking-[0.35em] text-[#8B0000]/80">Reset token for user</p>
-                <FloatingField
-                  id="reset-token"
-                  label="New token"
-                  type="password"
-                  value={resetToken}
-                  onChange={(event) => setResetToken(event.target.value)}
-                  required
-                />
-                <div className="flex items-center gap-3 md:justify-end">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="rounded-2xl border-white/30 bg-white/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-foreground"
-                    onClick={() => {
-                      setResetUserId(null);
-                      setResetToken("");
-                      setResetStatus("idle");
-                      setResetMessage(null);
-                    }}
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    type="submit"
-                    className="rounded-2xl bg-gradient-to-br from-[#8B0000] via-[#b21212] to-[#360000] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-white"
-                    disabled={resetStatus === "loading"}
-                  >
-                    {resetStatus === "loading" ? "Resetting" : "Confirm reset"}
-                  </Button>
-                </div>
-              </motion.form>
-            ) : null}
-          </AnimatePresence>
+                {createLoading ? "Menyimpan..." : "Simpan"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
-          <AnimatePresence mode="wait">
-            {resetMessage ? (
-              <motion.p
-                key={resetStatus}
-                className={cn(
-                  "rounded-2xl border px-4 py-3 text-sm font-medium",
-                  resetStatus === "success"
-                    ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-100"
-                    : "border-red-500/40 bg-red-500/10 text-red-100"
-                )}
-                initial={{ opacity: 0, y: -4 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -4 }}
-              >
-                {resetMessage}
-              </motion.p>
+      <Dialog open={tokenDialogOpen} onOpenChange={setTokenDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Generate Token Baru</DialogTitle>
+            <DialogDescription>
+              Token baru akan menggantikan token sebelumnya. Pastikan pengguna menerima token ini.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              User: <span className="font-semibold text-foreground">{selectedUser?.name ?? selectedUser?.nisn}</span>
+            </p>
+            {generatedToken ? (
+              <div className="rounded-2xl border border-white/20 bg-white/10 p-4 text-sm text-white">
+                <p className="text-xs uppercase tracking-[0.3em] text-white/60">Token Baru</p>
+                <p className="mt-2 font-mono text-lg text-amber-200">{generatedToken}</p>
+              </div>
             ) : null}
-          </AnimatePresence>
-        </CardContent>
-      </Card>
-    </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setTokenDialogOpen(false)}
+              className="rounded-2xl border-white/30 bg-white/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-foreground"
+            >
+              Tutup
+            </Button>
+            <Button
+              onClick={handleGenerateToken}
+              disabled={tokenLoading}
+              className="rounded-2xl bg-gradient-to-br from-[#8B0000] via-[#b21212] to-[#360000] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-white"
+            >
+              {tokenLoading ? "Memproses..." : "Generate"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </motion.div>
   );
 }
 
-type FloatingFieldProps = ComponentProps<typeof Input> & {
-  label: string;
-};
+function generateReadableToken(length = 16) {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+  const array = new Uint32Array(length);
+  if (typeof window !== "undefined" && window.crypto?.getRandomValues) {
+    window.crypto.getRandomValues(array);
+  } else {
+    for (let index = 0; index < length; index += 1) {
+      array[index] = Math.floor(Math.random() * alphabet.length);
+    }
+  }
+  return Array.from({ length }, (_, index) => alphabet[array[index] % alphabet.length]).join("");
+}
 
-function FloatingField({ id, label, className, value, ...props }: FloatingFieldProps) {
-  const hasValue = typeof value === "string" ? value.length > 0 : Boolean(value);
-
+function Field({ label, required, children }: { label: string; required?: boolean; children: ReactNode }) {
   return (
-    <div className="relative">
-      <Input
-        id={id}
-        value={value}
-        className={cn(
-          "peer h-14 rounded-2xl border-white/30 bg-white/10 px-4 text-lg text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.45)] backdrop-blur placeholder-transparent transition-all",
-          "focus-visible:border-[#8B0000]/50 focus-visible:ring-[#8B0000]/40",
-          "dark:border-white/15 dark:bg-white/5",
-          className
-        )}
-        {...props}
-      />
-      <Label
-        htmlFor={id}
-        className={cn(
-          "pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-xs font-semibold uppercase tracking-[0.35em] text-foreground/60 transition-all",
-          "peer-focus:-top-2 peer-focus:left-3 peer-focus:translate-y-0 peer-focus:text-xs peer-focus:text-[#8B0000]",
-          hasValue ? "-top-2 left-3 translate-y-0 text-xs text-[#8B0000]" : ""
-        )}
-      >
+    <label className="space-y-2 text-sm text-foreground/80">
+      <span className="block text-xs uppercase tracking-[0.3em] text-foreground/60">
         {label}
-      </Label>
-    </div>
+        {required ? <span className="text-red-300">*</span> : null}
+      </span>
+      {children}
+    </label>
   );
 }
